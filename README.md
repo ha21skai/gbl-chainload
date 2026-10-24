@@ -32,8 +32,10 @@ state can read *unlocked* while the stock fastboot still refuses to start:
 3. The ABL prints `fastboot_unlock_verify error and reboot.` and resets
    after a few seconds.
 
-The chainload's own fastboot still works, but firmware flashers and
-`fastbootd` workflows that expect the stock bootloader remain unusable.
+The chainload's own superfastboot still works, and so does `fastbootd`.
+What is missing is the stock bootloader's fastboot itself - the ABL
+screen and the path flashers take when they push `adb reboot bootloader`
+- which is exactly what patch11 restores.
 
 The gate is one branch:
 
