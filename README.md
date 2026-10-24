@@ -1,133 +1,214 @@
-# gbl-chainload
+# gbl-chainload — fork with stock-fastboot access
 
-EFI System Partition (EFISP) chainloader for OnePlus/Oppo devices using Qualcomm's GBL/EFISP load mechanism. Patches the active-slot ABL in memory, installs targeted protocol hooks, and hands off to the patched ABL.
+GBL/EFISP chainloader for Qualcomm **Snapdragon 8 Gen 5 / 8 Elite (Gen 5)**
+devices. It patches the active-slot ABL in memory, installs targeted
+protocol hooks, and hands off to the patched ABL.
+
+This fork tracks [1vivy/gbl-chainload](https://github.com/1vivy/gbl-chainload)
+and adds:
+
+- **`patch11-fastboot-unlock-verify`** — makes the stock ABL fastboot
+  start on OPPO / OnePlus units where the official unlock path
+  (`DeepTest` / 深度测试) is unavailable or fails, instead of printing
+  `fastboot_unlock_verify error and reboot.` and resetting.
+- **`tools/abl_anchor_probe.py`** — classifies that gate on any ABL
+  (applicable / already patched / different shape / different string).
+- **`docs/PATCH11-PORTING.md`** — how to port it to another model.
+
+> **Tested on one device only: CPH2841 (OPPO Find X9 Ultra), ColorOS
+> 17.0.0.101, ABL 16.0.6 on the `abl` partition.** Every other model,
+> firmware and OEM is untested.
+
+---
+
+## Why patch11
+
+On units that cannot be unlocked through the official flow, the bootloader
+state can read *unlocked* while the stock fastboot still refuses to start:
+
+1. The ABL runs its `fastboot-sec` checks — export whitelist, serial
+   match, project id.
+2. Verification fails because the unit was not unlocked officially.
+3. The ABL prints `fastboot_unlock_verify error and reboot.` and resets
+   after a few seconds.
+
+The chainload's own fastboot still works, but firmware flashers and
+`fastbootd` workflows that expect the stock bootloader remain unusable.
+
+The gate is one branch:
+
+```text
+bl   fastboot_unlock_verify      ; x0 = status, 0 = verified
+cbz  x0, <after_error>           ; skip the error block on success
+adrp x1, ...
+add  x1, x1, #<str offset>       ; "fastboot_unlock_verify error and reboot."
+...
+bl   reboot
+<after_error>:
+```
+
+`patch11` finds the string, resolves the `ADRP+ADD` that loads it, and
+rewrites the `CBZ`/`CBNZ` into an unconditional `B` with the same target.
+
+The patch anchors on the **string**, not on a device id or a fixed
+offset. It lives in `abl_permissive`, which is linked into both the host
+CLI and the firmware image, so it applies:
+
+- at build time, when packaging a cached ABL (`gbl patch`), and
+- at runtime, through the chainload's dynamic-patch path.
+
+It does **not** unlock anything by itself. Unlocking still uses the
+chainload's `Enable OEM unlock` / `fastboot flashing unlock` flow;
+`patch11` only keeps the ABL from bouncing out of fastboot afterwards.
 
 ## Status
 
-v2 shim is usable for mode-0 and mode-1. Project documentation, reverse-engineering findings, and the current milestone marker live in [`docs/project/`](docs/project/).
+| Device | Firmware | ABL on `abl` | Result |
+|---|---|---|---|
+| CPH2841 (Find X9 Ultra) | ColorOS 17.0.0.101 | 16.0.6 (GBL-capable) | stock fastboot reachable, `DEVICE STATE - unlocked` |
 
-Working artifacts: `dist/mode-0.efi` (unlocked observation + universal preservation build) and `dist/mode-1.efi` (protocol-hook fakelock via `QCOM_VERIFIEDBOOT_PROTOCOL` mutation; KM/Oplus see locked/green when stock images verify cleanly).
+Observations from that single test:
 
-Mode-1 supports the "stock recovery + custom system" use case by default. Custom recovery + normal boot requires a disk-side graft of stock vbmeta — see [`docs/project/next-milestone.md`](docs/project/next-milestone.md). Both a host script and a device-side companion module remain next-milestone work; neither ships today.
-
-## Modes
-
-- **mode-0** — unlocked observation + universal preservation build. Installs protocol hooks for logging and for the narrow preservation baseline: drop TZ soft-fuse advancement and swallow `oplusreserve1` / `opporeserve1` writes. VB lock-state and OplusSec writes pass through so stock ABL can run the real relock procedure.
-- **mode-1** — protocol-hook fakelock. ABL sees locked DeviceInfo and builds KM SET_ROT/SET_BOOT_STATE off that view.
-- **mode-2** — TA-payload spoof at QSEE/SPSS boundaries (custom-ROM mode); ABL stays honest; per-OTA typed-struct profile injected via `GblPayloadLib`.
+- The `abl` partition must carry a **GBL-capable** ABL. ABLs from
+  16.0.10.602 onwards have the `efisp` loader removed and will not start
+  the chainload.
+- The **cached ABL** inside the efisp payload is a separate artifact and
+  should be built from the matching firmware image.
+- Mode 2 reached the ABL fastboot with `unlocked: yes` and needed no
+  userdata format on this unit.
 
 ## Build
 
 ```bash
-./scripts/build.sh --mode 0               # unlocked observation + preservation baseline
-./scripts/build.sh --mode 1               # fakelock production silent
-./scripts/build.sh --mode 1 --auto --debug --verbose   # fakelock dev capture
-./scripts/build.sh --mode 2               # TA-payload spoof (custom-ROM mode)
+./scripts/build.sh --mode 0    # unlocked observation + preservation baseline
+./scripts/build.sh --mode 1    # fakelock (production)
+./scripts/build.sh --mode 2    # TA-payload spoof (custom-ROM mode)
+cargo test -p patch-engine     # unit tests, incl. patch11 table sizes
 ```
 
-## Logging
+Artifacts land in `dist/` (EFI) and `bin/` (host tools).
 
-Three primitives from `GblChainloadPkg/Include/Library/GblLog.h` (ASCII format strings, drop the `L` prefix):
+## Use
 
-| Macro / call | Build flag | Goes to screen? | Goes to UefiLog<N>.txt? |
-|--------------|------------|------------------|--------------------------|
-| `Print(L"...")` | always | yes | yes |
-| `GBL_INFO("...")` | `GBL_DEBUG=0` (prod) | no | yes (via `ReportStatusCode` → UART) |
-| `GBL_INFO("...")` | `GBL_DEBUG=1` (`--debug`) | yes (via AsciiPrint) | yes |
-| `VERBOSE("...")` | `GBL_VERBOSE=0` | — (compile-stripped to no-op) | — |
-| `VERBOSE("...")` | `GBL_VERBOSE=1` (`--verbose`) | yes (via AsciiPrint) | yes |
+```bash
+# 1. package the efisp payload for the target firmware
+python3 scripts/efisp-package.py \
+  --abl abl.img --mode 1 \
+  --efi dist/gbl-chainload-<ver>.efi \
+  --oem oplus \
+  --out installed-mode1.efi
 
-`DEBUG((DEBUG_ERROR, "..."))` and `DEBUG((DEBUG_WARN, "..."))` are kept for unconditional error / warning paths (route through the same `ReportStatusCode` path).
+# 2. RAM test first — touches no persistent partition
+fastboot stage installed-mode1.efi
+fastboot oem boot-efi
 
-### When to use which
+# 3. once it boots, flash the payload to efisp from the chainload fastboot
+#    fastboot flash efisp installed-mode1.efi
+```
 
-- **`Print(L"...")`** — content the user MUST see regardless of build: user prompts ("Hold VolUp within 3s..."), fatal error messages ("LOGFS PARTITION NOT FOUND"). Screen-visible, also lands in UefiLog. Use sparingly.
+Enter the ABL fastboot with `adb reboot bootloader` or the chainload menu.
+Expected: the green `START` screen with `DEVICE STATE - unlocked`.
 
-- **`GBL_INFO("...")`** — semantic events relevant to verifying correctness: mutations our hooks perform (`vb-fakelock | is_unlocked 1->0`), swallows (`vb-rwstate | swallowed`), crypto outputs on intercepted commands (`qsee-km | SET_ROT | rotDigest=...`, `spss-bootstate | unlocked=0 | color=0`), install banners, BootFlow status. Silent on prod screen, visible under `--debug`, always in UefiLog. **This is the "did the hook do what I expect?" channel.**
+## Verify the patch
 
-- **`VERBOSE("...")`** — raw pass-through traces: every qsee call, every scm syscall, per-call hex dumps, scan-loop iterations. Compile-stripped from prod and `--debug` builds; only present in `--verbose`. **Don't use it for anything you'd want to see in prod.**
+```bash
+./bin/gbl patch --check-anchors-only --in abl.efi --oem oplus
+./bin/gbl patch --in abl.efi --out patched.efi --oem oplus
+```
 
-### Classification rules
+`applied=4 missed=0` means patch11 found its site alongside patch6,
+patch7 and patch10.
 
-When adding a new emit in a hook or patch:
+To inspect an ABL without patching it:
 
-- Is it a **mutation** the hook performs, or a **swallow** the hook executes, or a **crypto output on an intercepted command**? → `GBL_INFO`.
-- Is it a pass-through query (READ / GET / probe) or a per-call raw dump? → `VERBOSE`.
-- Is it protocol-internal marshalling (Mink op decoding, vtable dispatch tracing) with no semantic payload? → **don't emit at all**. Both prod and `--verbose` lose nothing.
-- Is it a user prompt or an error that MUST be visible? → `Print(L"...")`.
+```bash
+python3 tools/abl_anchor_probe.py abl.efi --md report.md --json report.json
+# partition images: pass --gbl ./bin/gbl to unwrap on the fly
+```
 
-### Format string gotchas
+## Porting to another device
 
-- All `GBL_INFO` / `VERBOSE` format strings are CHAR8 ASCII (`"foo=%u\n"`, no `L` prefix).
-- `%s` consumes CHAR8\* in `GBL_INFO` / `VERBOSE` / `AsciiPrint`. To print a CHAR16\* string, convert it to ASCII first via `UnicodeStrToAsciiStrS` into a local buffer.
-- `%a` always means ASCII string regardless of macro choice.
+The patch is not device-specific. Per build, only three things vary: the
+exact string, the guard instruction, and how many loaders reference it.
+The probe reports all three and classifies the site as `APPLICABLE`,
+`ALREADY_PATCHED`, `B_COND_SHAPE`, `MULTI_ADRL`, `NO_STRING`, …
 
-## Repo conventions
+Short version:
 
-- `GblChainloadPkg/Library/DynamicPatchLib/{universal,oem,mode_1}/` — patches scoped by applicability.
-- `GblChainloadPkg/Library/ProtocolHookLib/UniversalBaseline.c` — narrow policies every mode ships.
-- `GblChainloadPkg/Library/ProtocolHookLib/Mode1Overlay.c` — mode-1-specific hooks atop baseline.
+1. `gbl unwrap abl.img out.efi`
+2. `python3 tools/abl_anchor_probe.py out.efi` → `APPLICABLE` needs no change
+3. `NO_STRING` → add the OEM wording to a `GATE_STRS` slice
+4. `B_COND_SHAPE` → confirm polarity, accept `B.cond`
+5. `MULTI_ADRL` → patch the loader whose guard is a forward `CBZ`
+6. `--check-anchors-only`, then RAM-test with `stage` + `boot-efi`
 
-## FastbootLib surface
+Full decision table: [docs/PATCH11-PORTING.md](docs/PATCH11-PORTING.md).
 
-The bundled edk2 FastbootLib is trimmed for RAM-loaded gbl-chainload testing and scripts.
+## Modes
 
-Useful getvars:
+- **mode-0** — unlocked observation + universal preservation build.
+  Installs protocol hooks for logging and the narrow preservation
+  baseline: drop TZ soft-fuse advancement and swallow
+  `oplusreserve1` / `opporeserve1` writes. VB lock-state and OplusSec
+  writes pass through so the stock ABL can run the real relock procedure.
+- **mode-1** — protocol-hook fakelock. ABL sees a locked DeviceInfo and
+  builds KM `SET_ROT` / `SET_BOOT_STATE` off that view.
+- **mode-2** — TA-payload spoof at QSEE/SPSS boundaries (custom-ROM
+  mode); ABL stays honest, a per-OTA typed-struct profile is injected
+  through `GblPayloadLib`.
 
-- `gbl-chainload_mode` — `mode-0`, `mode-1`, etc.
-- `gbl-chainload_date`
-- `gbl-chainload_auto`
-- `gbl-chainload_debug`
-- `gbl-chainload_verbose`
-- `unlocked`
-- `oem-unlock-allowed`
-- `vbmeta:capabilities`
-- `vbmeta:slot`
-- `vbmeta:warning`
-- `vbmeta:<partition>:status`
-- `vbmeta:<partition>:descriptor-type`
+## Fastboot surface
+
+Useful getvars: `gbl-chainload_mode`, `gbl-chainload_date`,
+`gbl-chainload_auto`, `gbl-chainload_debug`, `gbl-chainload_verbose`,
+`unlocked`, `oem-unlock-allowed`, `vbmeta:capabilities`, `vbmeta:slot`,
+`vbmeta:warning`, `vbmeta:<partition>:status`.
 
 Useful commands:
 
-- `fastboot stage <file>` — stage an image for `boot`, `oem boot-efi`, or other staged-data commands.
-- `fastboot oem escape` — leave gbl-chainload FastbootLib and continue into patched ABL.
-- `fastboot oem boot-efi` — boot the currently staged EFI image with `LoadImage()` / `StartImage()`.
-- `fastboot oem oem-unlock-toggle` — enable the FRP OEM-unlock-allowed bit; second use is a no-op.
-- `fastboot flashing lock` / `fastboot flashing unlock` — update DevInfo lock state while skipping forced recovery wipe.
+- `fastboot stage <file>` — stage an image for `oem boot-efi`
+- `fastboot oem escape` — leave the chainload fastboot, continue into
+  the patched ABL
+- `fastboot oem boot-efi` — `LoadImage()` / `StartImage()` the staged EFI
+- `fastboot oem oem-unlock-toggle` — set the FRP OEM-unlock-allowed bit;
+  second use is a no-op
+- `fastboot flashing lock` / `unlock` — update DevInfo lock state while
+  skipping the forced recovery wipe
 
-Fastboot screen additions:
+Menu actions: `Enable OEM unlock`, `Escape`, plus the untested
+`Boot ESP` entry.
 
-- `DATE - ...` build timestamp line.
-- `OEM UNLOCK ALLOWED - yes/no` state line.
-- `AVB WARNING - ...` warning line when lightweight vbmeta probing detects a risky state.
-- `Enable OEM unlock` menu action.
-- `Escape` menu action.
+## Logging
 
-There is also an untested `Boot ESP` menu option intended for directly booting operating systems from USB.
+Three primitives from `GblChainloadPkg/Include/Library/GblLog.h`:
 
-## Mode-0 reserve preservation test plan
+| Call | Build flag | Screen | `UefiLog<N>.txt` |
+|---|---|---|---|
+| `Print(L"...")` | always | yes | yes |
+| `GBL_INFO("...")` | `GBL_DEBUG=0` | no | yes |
+| `GBL_INFO("...")` | `GBL_DEBUG=1` (`--debug`) | yes | yes |
+| `VERBOSE("...")` | `GBL_VERBOSE=0` | stripped | — |
+| `VERBOSE("...")` | `GBL_VERBOSE=1` (`--verbose`) | yes | yes |
 
-Use only RAM-load testing for gbl-chainload itself:
+Use `Print` for prompts and fatal errors, `GBL_INFO` for mutations and
+swallows (`vb-fakelock | is_unlocked 1->0`), `VERBOSE` for raw
+pass-through traces. All format strings are CHAR8 ASCII.
 
-1. Boot/install the mode-0 chainload path.
-2. Install stock firmware.
-3. Perform a relock through the stock bootloader flow.
-4. Unlock again and pull logfs.
-5. Confirm a reserve write swallow was logged for the token block, e.g.
-   `blockio | op=write-swallow | reason=token-zero-write | p=oplusreserve1`.
+## Safety
 
-The token-zero intercept is also printed as vital user-visible output in every
-build:
+- Test chainload revisions with `fastboot stage` + `fastboot oem boot-efi`
+  only. That path touches no persistent partition.
+- Do not flash `abl`, `xbl`, `tz` or other boot-chain partitions from the
+  chainload fastboot without a recovery path (EDL).
+- Keep a dump of the previous `efisp` to roll back.
+- `patch11` is `mandatory: true`: an ABL without the string yields
+  `worst=2` in the CLI and a mandatory miss in firmware. Flip it to
+  optional for soft failure on unknown ABLs.
 
-`GBL: intercepted reserve token zeroing on oplusreserve1 LBA 1114; token preserved`
+## Credits and license
 
-That line appears when the relock path attempts to zero the token block.
+The chainloader, patch engine, mode taxonomy and build system are
+upstream work by [1vivy](https://github.com/1vivy/gbl-chainload). This
+fork adds `patch11`, the anchor probe and the porting notes.
 
-## Release convention
-
-Development and CI use `main`. Releases use an existing `release-X.Y.Z` tag
-matching `VERSION`; the release workflow checks and builds that exact commit,
-then creates a draft for review. Manual dispatch takes the same existing tag
-and does not create one. Historical `v...` tags and b4 checkpoints remain
-available, but do not trigger new releases. Artifact filenames and changelog
-version headings retain their existing version format.
+BSD-3-Clause, same as upstream.
