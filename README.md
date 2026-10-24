@@ -107,7 +107,22 @@ fastboot oem boot-efi
 ```
 
 Enter the ABL fastboot with `adb reboot bootloader` or the chainload menu.
-Expected: the green `START` screen with `DEVICE STATE - unlocked`.
+
+The two fastboot screens read the state differently, and mode-1 makes
+that visible:
+
+| Mode | ABL fastboot (stock `START` UI) | chainload superfastboot | `getvar unlocked` (ABL) |
+|---|---|---|---|
+| 0 | `unlocked` | `unlocked` | `yes` |
+| 1 | **`locked`** | `unlocked` | `no` |
+| 2 | `unlocked` | `unlocked` | `yes` |
+
+Mode-1 fakelocks the view the ABL reads, so the stock fastboot screen
+says `locked`, while the chainload's own fastboot still reports the real
+(unlocked) state. Both are expected. What patch11 guarantees is that the
+ABL gets this far instead of resetting with
+`fastboot_unlock_verify error and reboot.` - a `locked` line on mode-1 is
+not a failure, though that mode restricts `flash`/`erase` accordingly.
 
 ## Verify the patch
 

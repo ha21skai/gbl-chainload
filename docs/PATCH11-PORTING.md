@@ -79,9 +79,12 @@ fastboot stage dist/gbl-chainload-<ver>.efi
 fastboot oem boot-efi
 ```
 
-Expected screen: the ABL fastboot UI with `DEVICE STATE - unlocked` on a
-unit that was unlocked unofficially, and no
-`fastboot_unlock_verify error and reboot.`
+Expected: the ABL fastboot UI, and no
+`fastboot_unlock_verify error and reboot.` The `DEVICE STATE` line
+depends on which fastboot you are looking at: mode-0 and mode-2 show
+`unlocked` in both, while mode-1 shows `locked` on the ABL screen
+(fakelock) but `unlocked` in the chainload's own superfastboot, which
+reports the real state. Any of these means patch11 worked.
 
 ## Device coverage notes
 
