@@ -36,7 +36,10 @@ pub const ABL_PERMISSIVE_PATCHES: &[PatchDesc] = &[
     PatchDesc {
         name: "patch11-fastboot-unlock-verify",
         scope: PatchScope::AblPermissive,
-        mandatory: true,
+        // Optional: non-OPlus ABLs (Xiaomi, etc.) do not carry the
+        // `fastboot_unlock_verify` gate, and a mandatory miss there would
+        // abort an otherwise valid patch run.
+        mandatory: false,
         apply: fastboot_unlock_verify::apply,
     },
 ];

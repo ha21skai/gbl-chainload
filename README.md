@@ -201,9 +201,10 @@ pass-through traces. All format strings are CHAR8 ASCII.
 - Do not flash `abl`, `xbl`, `tz` or other boot-chain partitions from the
   chainload fastboot without a recovery path (EDL).
 - Keep a dump of the previous `efisp` to roll back.
-- `patch11` is `mandatory: true`: an ABL without the string yields
-  `worst=2` in the CLI and a mandatory miss in firmware. Flip it to
-  optional for soft failure on unknown ABLs.
+- `patch11` is **optional**: OPlus ABLs carry the gate and get patched;
+  a non-OPlus ABL (Xiaomi and friends) reports a MISS and the run
+  continues. Making it mandatory would abort patching on every non-OPlus
+  dump.
 
 ## Credits and license
 

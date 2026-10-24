@@ -85,10 +85,10 @@ unit that was unlocked unofficially, and no
 
 ## Device coverage notes
 
-- The patch is `mandatory: true`. On an ABL without the string the CLI
-  reports `worst=2`; the firmware path treats it as a mandatory miss.
-  Make it `false` if you want a soft failure on unknown ABLs.
+- The patch is **optional** (`mandatory: false`). On an ABL without the
+  string the CLI prints a MISS and the run continues; making it mandatory
+  would abort patching on every non-OPlus dump (test 088 pins this).
 - The `ABL_PERMISSIVE` scope is linked into both the host CLI and the
-  firmware image, so the runtime dynamic-patch path applies it too — a
+  firmware image, so the runtime dynamic-patch path applies it too - a
   bare efisp (no cached ABL) benefits as well, as long as the ABL on the
   `abl` partition carries the string.
