@@ -76,14 +76,15 @@ Observations from that single test:
   the chainload.
 - The **cached ABL** inside the efisp payload is a separate artifact and
   should be built from the matching firmware image.
-- Mode 2 reached the ABL fastboot with `unlocked: yes`; no userdata
-  format was needed.
-- Mode 1 also needed **no** userdata format. Its ABL fastboot reports
-  `DEVICE STATE - locked` / `unlocked: no` (fakelock), which is expected
-  and does not indicate a broken payload.
-- Mode 0 was the only payload that failed to boot in this test. It was
-  reverted to mode 1 rather than formatted, so whether mode 0 requires a
-  format here is unconfirmed.
+- Mode 2 reached the ABL fastboot with `unlocked: yes`.
+- On this unit, neither mode 1 nor mode 2 required a userdata format.
+  **Treat that as luck, not a rule**: a format may be needed on a first
+  flash, when changing modes, or when re-flashing over another BDS.
+- Mode 1 shows `DEVICE STATE - locked` / `unlocked: no` in the ABL
+  fastboot (fakelock). That is expected and does not indicate a broken
+  payload.
+- Mode 0 was the only payload that failed to boot here; it was reverted
+  rather than formatted, so its format requirement is unconfirmed.
 
 ## Build
 
