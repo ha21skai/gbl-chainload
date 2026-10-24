@@ -1,5 +1,26 @@
 # Changelog
 
+## v2.4.0 — 2026-10-24
+
+Highlights:
+
+- **patch11 - stock fastboot on units without an official unlock.** New
+  `abl_permissive` patch `patch11-fastboot-unlock-verify` rewrites the
+  `fastboot_unlock_verify` guard (`cbz` -> `b`) in ABL, so the stock
+  bootloader's fastboot starts on OPPO / OnePlus devices where DeepTest
+  (深度测试) is unavailable or fails, instead of printing
+  `fastboot_unlock_verify error and reboot.` and resetting the unit.
+  Anchored on the refusal string rather than a device id or fixed offset;
+  applied both by `gbl patch` at build time and by the runtime
+  dynamic-patch path. Tested on CPH2841 (ColorOS 17.0.0.101) only.
+- **README rewritten for the fork.** Fork purpose, tested-device status,
+  build and packaging flow, verification, porting summary, safety rules.
+- **ABL anchor probe + porting guide.** `tools/abl_anchor_probe.py`
+  classifies the gate on any ABL (`APPLICABLE`, `ALREADY_PATCHED`,
+  `B_COND_SHAPE`, `MULTI_ADRL`, `NO_STRING`, ...) and can emit the
+  patched PE; `docs/PATCH11-PORTING.md` documents the decision table and
+  how to extend the patch for a different guard or wording.
+
 ## v2.3.4 — 2026-05-24
 
 Highlights:
