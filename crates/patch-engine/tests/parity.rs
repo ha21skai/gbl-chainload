@@ -271,21 +271,21 @@ fn patch10_applies_and_leaves_signature_words() {
 // --- Engine-level integration tests -----------------------------------
 
 #[test]
-fn engine_scoped_oplus_applies_all_three() {
+fn engine_scoped_oplus_applies_all_four() {
     let buf = match infiniti_pe() {
         Some(b) => b,
         None => {
-            eprintln!("SKIP: engine_scoped_oplus_applies_all_three — fixture missing");
+            eprintln!("SKIP: engine_scoped_oplus_applies_all_four - fixture missing");
             return;
         }
     };
     let mut work = buf.clone();
     let engine = Engine::ensure_init_scoped(Oem::Oplus, true);
     let r = engine.apply(&mut work);
-    // patch7 (1) + patch10 (1) + patch6 (1) = 3 applied.
+    // patch7 (1) + patch10 (1) + patch6 (1) + patch11 (1) = 4 applied.
     assert_eq!(
-        r.applied_count, 3,
-        "expected patch7 + patch10 + patch6 all OK on infiniti PE"
+        r.applied_count, 4,
+        "expected patch7 + patch10 + patch6 + patch11 all OK on infiniti PE"
     );
     assert_eq!(r.missed_count, 0);
     assert_eq!(r.worst, Worst::Ok);
@@ -303,8 +303,8 @@ fn engine_scoped_none_only_runs_abl_permissive() {
     let mut work = buf.clone();
     let engine = Engine::ensure_init_scoped(Oem::None, true);
     let r = engine.apply(&mut work);
-    // patch10 + patch6.
-    assert_eq!(r.applied_count, 2);
+    // patch10 + patch6 + patch11.
+    assert_eq!(r.applied_count, 3);
     assert_eq!(r.missed_count, 0);
     assert_eq!(r.worst, Worst::Ok);
 
@@ -326,7 +326,7 @@ fn engine_firmware_path_only_abl_permissive() {
     // Engine::ensure_init() is the firmware-mode entry point — must
     // contain exactly the abl_permissive set.
     let engine = Engine::ensure_init();
-    assert_eq!(engine.table().len(), 2);
+    assert_eq!(engine.table().len(), 3);
     for p in engine.table() {
         assert_eq!(p.scope, PatchScope::AblPermissive);
     }
